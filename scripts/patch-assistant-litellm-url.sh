@@ -24,8 +24,10 @@ if [ ! -f "$KEY_FILE" ]; then
     exit 1
 fi
 
+set -a
 # shellcheck disable=SC1090
-set -a; source "$KEY_FILE"; set +a
+source "$KEY_FILE"
+set +a
 LKEY="${LITELLM_MASTER_KEY:-}"
 if [ -z "$LKEY" ]; then
     echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: LITELLM_MASTER_KEY empty in $KEY_FILE, aborting"

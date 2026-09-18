@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Verify Nextcloud Assistant integration is healthy.
 #
-# Checks: config values, network reachability, llama-server API (models + inference),
-# taskprocessing worker health, richdocuments language patch, and optionally an
+# Checks: config values, network reachability, LiteLLM API (models + inference),
+# taskprocessing worker health, chat-language regression scan, and optionally an
 # end-to-end chat task round-trip.
+#
+# Backend history: llama-server (pre-2026-07-23) -> bundled AIO LocalAI -> LiteLLM
+# proxy (2026-09-08, current). See ~/.claude/projects/*/memory/nextcloud-aio.md.
 #
 # Usage:
 #   ./test-assistant.sh
@@ -13,11 +16,19 @@
 set -uo pipefail
 
 CONTAINER="nextcloud-aio-nextcloud"
-LLAMA_GW="http://172.19.0.1:11435"
-EXPECTED_URL="${LLAMA_GW}/v1"
-EXPECTED_MODEL="Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M"
-DOC_SVC="/var/www/html/custom_apps/richdocuments/lib/Service/DocumentGenerationService.php"
+LITELLM_URL="http://192.168.0.236:4000"
+EXPECTED_URL="${LITELLM_URL}/v1"
+EXPECTED_MODEL="mistral-small3.2"
+LITELLM_KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
 NC_URL="${NC_URL:-https://workspace.coreconduit.com}"
+
+LITELLM_MASTER_KEY=""
+if [[ -r "$LITELLM_KEY_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$LITELLM_KEY_FILE"
+  set +a
+fi
 
 # Worker: designed to run for --timeout=300 then exit cleanly (ExecMainStatus=0).
 # Systemd restarts it every ~310 seconds. Max expected hourly rate = 3600/310 ≈ 12/h.
@@ -72,7 +83,7 @@ else
 fi
 
 enabled=$(occ app:list 2>/dev/null)
-for app in assistant integration_openai richdocuments; do
+for app in assistant integration_openai eurooffice; do
   if echo "$enabled" | grep -q "$app"; then
     pass "app enabled: $app"
   else
@@ -81,37 +92,43 @@ for app in assistant integration_openai richdocuments; do
 done
 
 # ── 2. Network ────────────────────────────────────────────────────────────────
-section "Network (NC container → llama-server)"
+section "Network (NC container → LiteLLM)"
 
-if nc_curl "--max-time 5 ${LLAMA_GW}/health > /dev/null"; then
-  pass "llama-server reachable from NC container (${LLAMA_GW})"
+if nc_curl "--max-time 5 ${LITELLM_URL}/health/readiness > /dev/null"; then
+  pass "LiteLLM reachable from NC container (${LITELLM_URL})"
 else
-  fail "llama-server NOT reachable — check ufw rule: allow from 172.16.0.0/12 to any port 11435"
+  fail "LiteLLM NOT reachable from NC container — check LiteLLM proxy is up and both Docker stacks (rootless user Docker for LiteLLM/Ollama, root Docker for AIO) can still reach each other over the LAN"
 fi
 
-# ── 3. llama-server API ───────────────────────────────────────────────────────
-section "llama-server API"
+# ── 3. LiteLLM API ────────────────────────────────────────────────────────────
+section "LiteLLM API"
 
-models_json=$(nc_curl "--max-time 10 ${LLAMA_GW}/v1/models")
-if [[ -z "$models_json" ]]; then
-  fail "GET /v1/models: no response"
+if [[ -z "$LITELLM_MASTER_KEY" ]]; then
+  fail "LITELLM_MASTER_KEY not found — expected in $LITELLM_KEY_FILE, skipping models/inference checks"
 else
-  if echo "$models_json" | grep -q "$EXPECTED_MODEL"; then
-    pass "GET /v1/models: '$EXPECTED_MODEL' listed"
+  models_json=$(sudo docker exec "$CONTAINER" bash -c \
+    "curl -s --max-time 10 -H 'Authorization: Bearer ${LITELLM_MASTER_KEY}' ${EXPECTED_URL}/models" 2>/dev/null)
+  if [[ -z "$models_json" ]]; then
+    fail "GET /v1/models: no response"
   else
-    available=$(echo "$models_json" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//' | head -3 | tr '\n' ' ')
-    warn "GET /v1/models: expected model not found — loaded models: ${available:-none}"
+    if echo "$models_json" | grep -q "\"$EXPECTED_MODEL\""; then
+      pass "GET /v1/models: '$EXPECTED_MODEL' listed"
+    else
+      available=$(echo "$models_json" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//' | head -3 | tr '\n' ' ')
+      warn "GET /v1/models: expected model not found — sample of models listed: ${available:-none}"
+    fi
   fi
-fi
 
-# Quick inference — 5-token budget keeps latency low
-infer_payload='{"model":"'"$EXPECTED_MODEL"'","messages":[{"role":"user","content":"Reply with only the word: PONG"}],"max_tokens":5,"temperature":0}'
-infer_json=$(nc_curl "--max-time 60 -X POST ${LLAMA_GW}/v1/chat/completions -H 'Content-Type: application/json' -d '$infer_payload'")
-if echo "$infer_json" | grep -q '"content"'; then
-  content=$(echo "$infer_json" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"//')
-  pass "inference: model responded (content: $content)"
-else
-  fail "inference: no 'content' field in response — $(echo "$infer_json" | head -c 200)"
+  # Quick inference — 5-token budget keeps latency low
+  infer_payload='{"model":"'"$EXPECTED_MODEL"'","messages":[{"role":"user","content":"Reply with only the word: PONG"}],"max_tokens":5,"temperature":0}'
+  infer_json=$(sudo docker exec "$CONTAINER" bash -c \
+    "curl -s --max-time 60 -X POST ${EXPECTED_URL}/chat/completions -H 'Authorization: Bearer ${LITELLM_MASTER_KEY}' -H 'Content-Type: application/json' -d '$infer_payload'" 2>/dev/null)
+  if echo "$infer_json" | grep -q '"content"'; then
+    content=$(echo "$infer_json" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"//')
+    pass "inference: model responded (content: $content)"
+  else
+    fail "inference: no 'content' field in response — $(echo "$infer_json" | head -c 200)"
+  fi
 fi
 
 # ── 4. Task Processing Worker ─────────────────────────────────────────────────
@@ -148,23 +165,7 @@ else
   warn "taskprocessing: no tasks in history"
 fi
 
-# ── 5. Richdocuments Language Patch ──────────────────────────────────────────
-section "Richdocuments Language Patch"
-
-if sudo docker exec "$CONTAINER" grep -q "do not default to any other language" "$DOC_SVC" 2>/dev/null; then
-  pass "language patch applied to DocumentGenerationService.php"
-else
-  fail "language patch NOT applied — run: scripts/patch-richdocuments-language.sh"
-fi
-
-# Warn about patch persistence: AUTOMATIC_UPDATES=1 means the container gets replaced
-# nightly and the in-container patch is lost. A post-update hook is needed.
-if sudo docker inspect nextcloud-aio-mastercontainer \
-   --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q "AUTOMATIC_UPDATES=1"; then
-  warn "AUTOMATIC_UPDATES=1 — container updates may overwrite the richdocuments patch; consider a post-update cron hook"
-fi
-
-# ── 6. Language Regression Check (recent task history) ────────────────────────
+# ── 5. Language Regression Check (recent task history) ────────────────────────
 section "Language Regression Check (task history)"
 
 # Look for any recent successful chat tasks whose output contains German-language
@@ -197,7 +198,7 @@ if [[ "$lang_regressions" -eq 0 ]]; then
   pass "language regression check: no German responses detected in chat task history"
 fi
 
-# ── 7. End-to-End Chat Round-Trip (requires --e2e-user / --e2e-pass) ──────────
+# ── 6. End-to-End Chat Round-Trip (requires --e2e-user / --e2e-pass) ──────────
 if [[ -n "$E2E_USER" && -n "$E2E_PASS" ]]; then
   section "End-to-End Chat Round-Trip"
 
