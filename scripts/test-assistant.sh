@@ -204,12 +204,12 @@ if [[ -n "$E2E_USER" && -n "$E2E_PASS" ]]; then
   # Submit a chat task via NC taskprocessing API
   e2e_payload='{"type":"core:text2text:chat","appId":"test-assistant","input":{"input":"What color is the sky on a clear day? One sentence.","system_prompt":"You are a test assistant. Always respond in English only.","history":[],"memories":[]}}'
 
-  submit_json=$(curl -sf --max-time 15 \
+  submit_json=$(curl -s --max-time 15 \
     -u "${E2E_USER}:${E2E_PASS}" \
     -H "OCS-APIRequest: true" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
-    -X POST "${NC_URL}/ocs/v2.php/taskprocessing/task" \
+    -X POST "${NC_URL}/ocs/v2.php/taskprocessing/schedule" \
     -d "$e2e_payload" 2>/dev/null)
 
   task_id=$(echo "$submit_json" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
