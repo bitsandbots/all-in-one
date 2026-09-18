@@ -229,11 +229,12 @@ if [[ -n "$E2E_USER" && -n "$E2E_PASS" ]]; then
         -H "Accept: application/json" \
         "${NC_URL}/ocs/v2.php/taskprocessing/task/${task_id}" 2>/dev/null)
 
-      # status values: 1=queued 2=running 3=successful 4=failed 5=cancelled
-      status=$(echo "$task_json" | grep -o '"status":[0-9]*' | head -1 | cut -d: -f2)
-      case "${status:-0}" in
-        3) completed=true; break ;;
-        4|5) fail "e2e task status: $([ "$status" = "4" ] && echo failed || echo cancelled)"; break ;;
+      # OCS API returns the enum name (STATUS_SCHEDULED/STATUS_RUNNING/STATUS_SUCCESSFUL/
+      # STATUS_FAILED/STATUS_CANCELLED/STATUS_UNKNOWN), not the underlying int constant.
+      status=$(echo "$task_json" | grep -o '"status":"STATUS_[A-Z]*"' | head -1 | cut -d'"' -f4)
+      case "${status:-STATUS_UNKNOWN}" in
+        STATUS_SUCCESSFUL) completed=true; break ;;
+        STATUS_FAILED|STATUS_CANCELLED) fail "e2e task status: $status"; break ;;
       esac
     done
 
