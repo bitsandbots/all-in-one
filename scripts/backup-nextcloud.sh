@@ -136,11 +136,18 @@ stop_aio_containers() {
 
     echo "$containers" > "$CONTAINERS_FILE"
 
-    # Stop in reverse dependency order (app → cache → db)
+    # Stop front-to-back: reverse proxy first (drop new inbound requests before
+    # anything behind it goes down), then app-tier services, then cache/db last.
     local stop_order=(
+        nextcloud-aio-apache
         nextcloud-aio-talk
         nextcloud-aio-collabora
+        nextcloud-aio-notify-push
+        nextcloud-aio-notifications
         nextcloud-aio-imaginary
+        nextcloud-aio-local-ai
+        nextcloud-aio-eurooffice
+        nextcloud-aio-fail2ban
         nextcloud-aio-clamav
         nextcloud-aio-fulltextsearch
         nextcloud-aio-whiteboard
@@ -160,6 +167,16 @@ stop_aio_containers() {
             fi
         fi
     done
+
+    # Anything running that isn't in stop_order above was left up through the
+    # whole backup window — flag it so a future new AIO container doesn't
+    # silently fall through the same gap this list once had.
+    while IFS= read -r c; do
+        [[ -z "$c" ]] && continue
+        if ! printf '%s\n' "${stop_order[@]}" | grep -qx "$c"; then
+            warn "container '$c' is running but not in stop_order — left up through the backup window, container list may be stale"
+        fi
+    done < "$CONTAINERS_FILE"
 }
 
 start_aio_containers() {
@@ -171,17 +188,24 @@ start_aio_containers() {
         return
     fi
 
-    # Start in dependency order (db → cache → app)
+    # Start back-to-front: db/cache first, then app tier, reverse proxy last
+    # (so nothing routes to it until the backend it fronts is actually up).
     local start_order=(
         nextcloud-aio-database
         nextcloud-aio-redis
         nextcloud-aio-nextcloud
+        nextcloud-aio-whiteboard
+        nextcloud-aio-fulltextsearch
+        nextcloud-aio-clamav
+        nextcloud-aio-fail2ban
+        nextcloud-aio-eurooffice
+        nextcloud-aio-local-ai
+        nextcloud-aio-imaginary
+        nextcloud-aio-notifications
+        nextcloud-aio-notify-push
         nextcloud-aio-collabora
         nextcloud-aio-talk
-        nextcloud-aio-imaginary
-        nextcloud-aio-clamav
-        nextcloud-aio-fulltextsearch
-        nextcloud-aio-whiteboard
+        nextcloud-aio-apache
     )
 
     for c in "${start_order[@]}"; do
@@ -302,8 +326,12 @@ rotate_old_backups() {
     step "Rotating backups older than ${BACKUP_RETENTION_DAYS} days"
     local removed=0
     while IFS= read -r -d '' dir; do
-        rm -rf "$dir"
-        ok "Removed: $dir"
+        if [[ "$DRY_RUN" == true ]]; then
+            dryrun "rm -rf $dir"
+        else
+            rm -rf "$dir"
+            ok "Removed: $dir"
+        fi
         removed=$((removed + 1))
     done < <(find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d \
         -mtime "+${BACKUP_RETENTION_DAYS}" -print0 2>/dev/null)
