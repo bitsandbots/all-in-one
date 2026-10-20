@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-EXPECTED_URL="http://192.168.0.236:4000/v1"
+EXPECTED_URL="http://172.19.0.1:4000/v1"
 KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
 NC_CONTAINER="nextcloud-aio-nextcloud"
 

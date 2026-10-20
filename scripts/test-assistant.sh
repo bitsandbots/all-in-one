@@ -16,7 +16,7 @@
 set -uo pipefail
 
 CONTAINER="nextcloud-aio-nextcloud"
-LITELLM_URL="http://192.168.0.236:4000"
+LITELLM_URL="http://172.19.0.1:4000"
 EXPECTED_URL="${LITELLM_URL}/v1"
 EXPECTED_MODEL="mistral-small3.2"
 LITELLM_KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
