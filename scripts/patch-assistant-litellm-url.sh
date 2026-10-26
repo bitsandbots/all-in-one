@@ -12,8 +12,16 @@
 # re-set of the two config values, not a code patch.
 #
 # Idempotent: only writes when the current url has drifted from the expected value.
+#
+# Usage: patch-assistant-litellm-url.sh [--quiet]
+#   --quiet  stay silent unless something drifted or failed (for the 5-minute cron:
+#            the reset happens whenever AIO restarts nextcloud-aio-local-ai, so
+#            this runs often; "already correct" and "container down" are normal).
 
 set -euo pipefail
+
+QUIET=false
+[ "${1:-}" = "--quiet" ] && QUIET=true
 
 EXPECTED_URL="http://172.19.0.1:4000/v1"
 KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
@@ -35,6 +43,7 @@ if [ -z "$LKEY" ]; then
 fi
 
 if ! docker ps --format '{{.Names}}' | grep -qx "$NC_CONTAINER"; then
+    $QUIET && exit 0
     echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: $NC_CONTAINER not running, skipping"
     exit 1
 fi
@@ -42,7 +51,7 @@ fi
 CURRENT_URL=$(docker exec --user www-data "$NC_CONTAINER" php occ config:app:get integration_openai url 2>/dev/null || echo "")
 
 if [ "$CURRENT_URL" = "$EXPECTED_URL" ]; then
-    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ALREADY CORRECT: integration_openai url is $EXPECTED_URL, skipping"
+    $QUIET || echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ALREADY CORRECT: integration_openai url is $EXPECTED_URL, skipping"
     exit 0
 fi
 
