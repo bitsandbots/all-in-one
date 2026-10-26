@@ -23,8 +23,30 @@ set -euo pipefail
 QUIET=false
 [ "${1:-}" = "--quiet" ] && QUIET=true
 
-EXPECTED_URL="http://172.19.0.1:4000/v1"
-KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
+# Backend selector (set ASSISTANT_BACKEND in the cron file; rollback = "litellm"):
+#   shim    cc-platform OpenAI shim (agent graph + tools), model "cc-platform"
+#   litellm host LiteLLM proxy straight to Ollama, model "mistral-small3.2"
+BACKEND="${ASSISTANT_BACKEND:-shim}"
+case "$BACKEND" in
+shim)
+    EXPECTED_URL="http://172.19.0.1:4200/v1"
+    EXPECTED_MODEL="cc-platform"
+    EXPECTED_LABEL="cc-platform agent (shim, tier2-chat)"
+    KEY_FILE="/home/coreconduit/.config/cc-shim/shim.env"
+    KEY_VAR="CC_SHIM_KEY"
+    ;;
+litellm)
+    EXPECTED_URL="http://172.19.0.1:4000/v1"
+    EXPECTED_MODEL="mistral-small3.2"
+    EXPECTED_LABEL="LiteLLM (host GPU, mistral-small3.2)"
+    KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
+    KEY_VAR="LITELLM_MASTER_KEY"
+    ;;
+*)
+    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: unknown ASSISTANT_BACKEND '$BACKEND' (expected shim|litellm), aborting"
+    exit 1
+    ;;
+esac
 NC_CONTAINER="nextcloud-aio-nextcloud"
 
 if [ ! -f "$KEY_FILE" ]; then
@@ -36,9 +58,9 @@ set -a
 # shellcheck disable=SC1090
 source "$KEY_FILE"
 set +a
-LKEY="${LITELLM_MASTER_KEY:-}"
+LKEY="${!KEY_VAR:-}"
 if [ -z "$LKEY" ]; then
-    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: LITELLM_MASTER_KEY empty in $KEY_FILE, aborting"
+    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: $KEY_VAR empty in $KEY_FILE, aborting"
     exit 1
 fi
 
@@ -48,18 +70,23 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NC_CONTAINER"; then
     exit 1
 fi
 
-CURRENT_URL=$(docker exec --user www-data "$NC_CONTAINER" php occ config:app:get integration_openai url 2>/dev/null || echo "")
+OCC=(docker exec --user www-data "$NC_CONTAINER" php occ)
+CURRENT_URL=$("${OCC[@]}" config:app:get integration_openai url 2>/dev/null || echo "")
+CURRENT_MODEL=$("${OCC[@]}" config:app:get integration_openai default_completion_model_id 2>/dev/null || echo "")
+CURRENT_KEY=$("${OCC[@]}" config:app:get integration_openai api_key 2>/dev/null || echo "")
 
-if [ "$CURRENT_URL" = "$EXPECTED_URL" ]; then
-    $QUIET || echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ALREADY CORRECT: integration_openai url is $EXPECTED_URL, skipping"
+if [ "$CURRENT_URL" = "$EXPECTED_URL" ] && [ "$CURRENT_MODEL" = "$EXPECTED_MODEL" ] && [ "$CURRENT_KEY" = "$LKEY" ]; then
+    $QUIET || echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ALREADY CORRECT: integration_openai is $BACKEND ($EXPECTED_URL, $EXPECTED_MODEL), skipping"
     exit 0
 fi
 
-echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') DRIFT DETECTED: integration_openai url was '$CURRENT_URL', expected '$EXPECTED_URL' — re-applying"
+echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') DRIFT DETECTED: integration_openai url '$CURRENT_URL' model '$CURRENT_MODEL' (key match: $([ "$CURRENT_KEY" = "$LKEY" ] && echo yes || echo no)), expected $BACKEND '$EXPECTED_URL' '$EXPECTED_MODEL' — re-applying"
 
-docker exec --user www-data "$NC_CONTAINER" php occ config:app:set integration_openai url --value="$EXPECTED_URL"
-docker exec --user www-data "$NC_CONTAINER" php occ config:app:set integration_openai api_key --value="$LKEY"
+"${OCC[@]}" config:app:set integration_openai url --value="$EXPECTED_URL"
+"${OCC[@]}" config:app:set integration_openai api_key --value="$LKEY"
+"${OCC[@]}" config:app:set integration_openai default_completion_model_id --value="$EXPECTED_MODEL"
+"${OCC[@]}" config:app:set integration_openai service_name --value="$EXPECTED_LABEL"
 
-echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') FIXED: integration_openai url + api_key re-applied"
+echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') FIXED: integration_openai url + api_key + model re-applied ($BACKEND)"
 
-unset LKEY LITELLM_MASTER_KEY
+unset LKEY CURRENT_KEY

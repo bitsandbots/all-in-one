@@ -16,10 +16,30 @@
 set -uo pipefail
 
 CONTAINER="nextcloud-aio-nextcloud"
-LITELLM_URL="http://172.19.0.1:4000"
+# Backend under test (same selector as patch-assistant-litellm-url.sh):
+#   shim = cc-platform OpenAI shim (default), litellm = host LiteLLM proxy.
+BACKEND="${ASSISTANT_BACKEND:-shim}"
+case "$BACKEND" in
+  shim)
+    LITELLM_URL="http://172.19.0.1:4200"
+    EXPECTED_MODEL="cc-platform"
+    LITELLM_KEY_FILE="/home/coreconduit/.config/cc-shim/shim.env"
+    KEY_VAR="CC_SHIM_KEY"
+    HEALTH_PATH="/health"
+    ;;
+  litellm)
+    LITELLM_URL="http://172.19.0.1:4000"
+    EXPECTED_MODEL="mistral-small3.2"
+    LITELLM_KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
+    KEY_VAR="LITELLM_MASTER_KEY"
+    HEALTH_PATH="/health/readiness"
+    ;;
+  *)
+    echo "unknown ASSISTANT_BACKEND '$BACKEND' (expected shim|litellm)" >&2
+    exit 2
+    ;;
+esac
 EXPECTED_URL="${LITELLM_URL}/v1"
-EXPECTED_MODEL="mistral-small3.2"
-LITELLM_KEY_FILE="/home/coreconduit/.config/litellm/litellm.env"
 NC_URL="${NC_URL:-https://workspace.coreconduit.com}"
 
 LITELLM_MASTER_KEY=""
@@ -28,6 +48,7 @@ if [[ -r "$LITELLM_KEY_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$LITELLM_KEY_FILE"
   set +a
+  LITELLM_MASTER_KEY="${!KEY_VAR:-}"
 fi
 
 # Worker: designed to run for --timeout=300 then exit cleanly (ExecMainStatus=0).
@@ -94,7 +115,7 @@ done
 # ── 2. Network ────────────────────────────────────────────────────────────────
 section "Network (NC container → LiteLLM)"
 
-if nc_curl "--max-time 5 ${LITELLM_URL}/health/readiness > /dev/null"; then
+if nc_curl "--max-time 5 ${LITELLM_URL}${HEALTH_PATH} > /dev/null"; then
   pass "LiteLLM reachable from NC container (${LITELLM_URL})"
 else
   fail "LiteLLM NOT reachable from NC container — check LiteLLM proxy is up and both Docker stacks (rootless user Docker for LiteLLM/Ollama, root Docker for AIO) can still reach each other over the LAN"
