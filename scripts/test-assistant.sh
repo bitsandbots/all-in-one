@@ -205,15 +205,24 @@ if [[ -n "$E2E_USER" && -n "$E2E_PASS" ]]; then
   # Submit a chat task via NC taskprocessing API
   e2e_payload='{"type":"core:text2text:chat","appId":"test-assistant","input":{"input":"What color is the sky on a clear day? One sentence.","system_prompt":"You are a test assistant. Always respond in English only.","history":[],"memories":[]}}'
 
-  submit_json=$(curl -s --max-time 15 \
-    -u "${E2E_USER}:${E2E_PASS}" \
-    -H "OCS-APIRequest: true" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json" \
-    -X POST "${NC_URL}/ocs/v2.php/taskprocessing/schedule" \
-    -d "$e2e_payload" 2>/dev/null)
-
-  task_id=$(echo "$submit_json" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+  # The nightly cron fires ~75 min after AUTOMATIC_UPDATES recreates containers;
+  # 2026-10-26 saw one empty response at the old 15s limit. Allow 45s and retry
+  # once on an empty body so a slow first request doesn't read as a failure.
+  task_id=""
+  submit_json=""
+  for attempt in 1 2; do
+    submit_json=$(curl -s --max-time 45 \
+      -u "${E2E_USER}:${E2E_PASS}" \
+      -H "OCS-APIRequest: true" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -X POST "${NC_URL}/ocs/v2.php/taskprocessing/schedule" \
+      -d "$e2e_payload" 2>/dev/null)
+    task_id=$(echo "$submit_json" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+    [[ -n "$task_id" || -n "$submit_json" ]] && break
+    echo "  (e2e submit attempt $attempt returned an empty body; retrying)" >&2
+    sleep 5
+  done
 
   if [[ -z "$task_id" ]]; then
     fail "e2e submit: failed to create task — $(echo "$submit_json" | head -c 300)"
