@@ -225,6 +225,13 @@ start_aio_containers() {
     if [[ "$DRY_RUN" == false ]]; then
         info "Waiting 10 s for containers to initialise..."
         sleep 10
+
+        # local-ai's start re-runs its exec_commands, resetting integration_openai
+        # (see patch-assistant-litellm-url.sh). Heal now instead of waiting for the
+        # 5-minute cron; failure is non-fatal because the cron remains the backstop.
+        info "Re-applying Assistant routing..."
+        "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/patch-assistant-litellm-url.sh" --quiet \
+            || warn "Assistant heal failed — the 5-minute cron will retry"
     fi
 }
 
