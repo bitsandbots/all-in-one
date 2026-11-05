@@ -51,6 +51,12 @@ done
 : "${BACKUP_DIR:=/mnt/backup/nextcloud}"
 : "${BACKUP_RETENTION_DAYS:=7}"
 : "${SKIP_DATA:=false}"
+# Optional: refuse to run unless this path is a mounted filesystem (stops a
+# missing external drive from silently filling the root disk).
+: "${REQUIRE_MOUNT:=}"
+if [[ -n "$REQUIRE_MOUNT" ]] && ! mountpoint -q "$REQUIRE_MOUNT"; then
+    die "REQUIRE_MOUNT=${REQUIRE_MOUNT} is not mounted; refusing to write backups to the root disk"
+fi
 
 # AIO container / volume names (defaults from install-nextcloud-aio.sh)
 : "${NC_MASTERCONTAINER:=nextcloud-aio-mastercontainer}"
