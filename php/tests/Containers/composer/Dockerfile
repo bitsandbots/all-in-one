@@ -1,4 +1,9 @@
-FROM docker.io/library/composer:2@sha256:aaeab4b6b031e0a88efb907f0f26b563532a644fc2f4ea0d000ecf8658f7a2b8
+FROM docker.io/library/composer:2@sha256:4ed71c38c6d788eb4e4e3747b5332f5b40d5b5a6fcadd5062a1a70986a118e0a
 
-RUN pecl bundle -d /usr/src/php/ext apcu \
+ARG APCU_VERSION=5.1.28
+
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
+RUN mkdir -p /usr/src/php/ext/apcu \
+ && curl -fsSL --retry 5 "https://github.com/krakjoe/apcu/archive/refs/tags/v$APCU_VERSION.tar.gz" \
+  | tar -xz --strip-components=1 -C /usr/src/php/ext/apcu \
  && docker-php-ext-install apcu

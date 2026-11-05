@@ -116,7 +116,7 @@ if ! su-exec www-data docker info &>/dev/null; then
         echo "If you are on TrueNas SCALE, see https://github.com/nextcloud/all-in-one#can-i-run-aio-on-truenas-scale"
         echo "On macOS, see https://github.com/nextcloud/all-in-one#how-to-run-aio-on-macos"
         echo "Another possibility might be that Docker api v$API_VERSION is not supported by your docker daemon."
-        echo "In that case, you should report this to https://github.com/nextcloud/all-in-one/issues"
+        echo "In that case, you should report this to https://github.com/nextcloud/all-in-one/discussions/new?category=questions"
         echo ""
         exit 1
     fi
@@ -442,9 +442,6 @@ fi
 caddy fmt --overwrite /acme.Caddyfile
 caddy fmt --overwrite /internal.Caddyfile
 
-# Fix caddy log 
-chmod 777 /root
-
 # Create Twig template cache directory (path must match TWIG_CACHE_PATH in php/public/index.php)
 mkdir -p /tmp/twig-cache
 rm -rf /tmp/twig-cache/*
@@ -452,4 +449,4 @@ chown www-data:www-data /tmp/twig-cache
 chmod 770 /tmp/twig-cache
 
 # Start dinit
-exec dinit --system --container php-fpm caddy-internal caddy-acme cron backup-time-file-watcher session-deduplicator domain-validator
+exec dinit --system --container php-fpm caddy-internal caddy-acme cron backup-time-file-watcher session-deduplicator domain-validator desec-ip-updater

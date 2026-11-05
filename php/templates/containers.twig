@@ -27,7 +27,7 @@
             <script type="text/javascript" src="timezone.js?v1"></script>
 
             {# js for optional containers and additional containers forms #}
-            <script type="text/javascript" src="containers-form-submit.js?v8"></script>
+            <script type="text/javascript" src="containers-form-submit.js?v9"></script>
 
             {% set hasBackupLocation = borg_backup_host_location or borg_remote_repo %}
             {% set isAnyRunning = false %}
@@ -37,8 +37,8 @@
             {% set isBackupOrRestoreRunning = false %}
             {% set isApacheStarting = false %}
             {# Setting newMajorVersion to '' will hide corresponding options/elements, can be set to an integer like 26 in order to show corresponding elements. If set, also increase installLatestMajor in https://github.com/nextcloud/all-in-one/blob/main/php/src/Controller/DockerController.php #}
-            {% set newMajorVersionString = '26 Summer' %}
-            {% set oldMajorVersionString = '26 Spring' %}
+            {% set newMajorVersionString = '' %}
+            {% set oldMajorVersionString = '' %}
 
             {% if is_backup_container_running == true %}
                 {% if borg_backup_mode == 'backup' or borg_backup_mode == 'restore' %}
@@ -370,6 +370,9 @@
                                         <input type="hidden" name="{{csrf.keys.name}}" value="{{csrf.name}}">
                                         <input type="hidden" name="{{csrf.keys.value}}" value="{{csrf.value}}">
                                         <input id="base_path" type="hidden" name="base_path" value="">
+                                        {% if bypass_container_update == true %}
+                                            <input type="hidden" name="bypass_container_update" value="true">
+                                        {% endif %}
                                         {% if newMajorVersionString != '' %}
                                             <input type="checkbox" id="install_latest_major" name="install_latest_major"><label for="install_latest_major">Install Nextcloud Hub {{ newMajorVersionString }} (if unchecked, Nextcloud Hub {{ oldMajorVersionString }} will get installed)</label><br>
                                         {% endif %}
@@ -494,7 +497,11 @@
                                         <summary>Click here to reveal all backup options (including an option for automatic updates)</summary>
                                     {% endif %}
                                     <h3>Backup information</h3>
-                                    <p>This is your encryption password for backups: <strong id="borg-backup-password">{{ borgbackup_password }}</strong></p>
+                                    {% if has_backup_run_once == true %}
+                                        <p><details class="inline-details"><summary>Reveal your encryption password for backups</summary><strong id="borg-backup-password">{{ borgbackup_password }}</strong></details></p>
+                                    {% else %}
+                                        <p>This is your encryption password for backups: <strong id="borg-backup-password">{{ borgbackup_password }}</strong></p>
+                                    {% endif %}
                                     <p>Please save this password in a safe place. You won't be able to restore from backup if you lose this password!</p>
                                     <p>All important data from your Nextcloud AIO instance such as the database, your files and the mastercontainer's configuration files, will be backed up.</p>
                                     <p>The backup uses a tool called <a target="_blank" href="https://github.com/borgbackup/borg#what-is-borgbackup"><strong>BorgBackup</strong></a>, a well-known server backup tool that efficiently backs up your files and encrypts them on the fly.</p>
