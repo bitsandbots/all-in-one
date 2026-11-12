@@ -1,0 +1,51 @@
+name: CI
+
+# Lean CI for this fork, run by the self-hosted Gitea Actions instance (GitHub Actions is
+# not the CI of record). Gitea reads .gitea/workflows/ before .github/workflows/, so the
+# ~30 upstream workflows (image publishing, scheduled version bumpers, ...) never run there.
+# ~/scripts/gitea-ci-sync.sh on the CI host pushes GitHub main and open PR heads (ci/pr-N)
+# to the CI repo, which is what triggers this.
+on:
+  push:
+    branches: [main, 'ci/**']
+  workflow_dispatch:
+
+jobs:
+  shell:
+    name: shellcheck + syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+
+      - name: bash -n (scripts/)
+        run: |
+          for f in scripts/*.sh; do
+            bash -n "$f" || { echo "syntax error in $f"; exit 1; }
+          done
+
+      - name: shellcheck scripts/ (warning and above)
+        run: shellcheck --severity=warning --format=gcc scripts/*.sh
+
+      - name: shellcheck whole repo (errors only, as upstream lints it)
+        run: git ls-files '*.sh' | xargs shellcheck --shell bash --severity=error -x
+
+  json:
+    name: JSON files parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate every tracked .json
+        run: |
+          git ls-files '*.json' | python3 -c '
+          import json, sys
+          bad = 0
+          for f in sys.stdin.read().split():
+              try:
+                  json.load(open(f))
+              except Exception as e:
+                  print(f"{f}: {e}"); bad += 1
+          sys.exit(1 if bad else 0)'
