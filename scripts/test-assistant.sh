@@ -103,9 +103,12 @@ else
   fail "chat_user_instructions — expected custom prompt, got '${val:-<unset>}'"
 fi
 
-enabled=$(occ app:list 2>/dev/null)
+# Only the "Enabled:" block counts: `app:list` also prints a "Disabled:" block
+# that lists the same app names, so a bare grep false-passes a disabled app
+# (it did on 2026-11-12 after the NC 35 upgrade disabled assistant + integration_openai).
+enabled=$(occ app:list 2>/dev/null | sed '/^Disabled:/,$d')
 for app in assistant integration_openai eurooffice; do
-  if echo "$enabled" | grep -q "$app"; then
+  if echo "$enabled" | grep -qE "^[[:space:]]+- ${app}:"; then
     pass "app enabled: $app"
   else
     fail "app not enabled: $app"
@@ -155,10 +158,14 @@ fi
 # ── 4. Task Processing Worker ─────────────────────────────────────────────────
 section "Task Processing Worker"
 
-if systemctl is-active --quiet nextcloud-taskprocessing-worker.service; then
-  pass "service: nextcloud-taskprocessing-worker is active"
+# The worker exits cleanly every 300s (--timeout=300) and systemd restarts it
+# after RestartSec=10. During those ~10s the unit is "activating" (auto-restart),
+# which is healthy — a bare is-active check false-failed ~3% of runs.
+worker_state=$(systemctl is-active nextcloud-taskprocessing-worker.service 2>/dev/null || true)
+if [[ "$worker_state" == "active" || "$worker_state" == "activating" ]]; then
+  pass "service: nextcloud-taskprocessing-worker is $worker_state"
 else
-  fail "service: nextcloud-taskprocessing-worker NOT active — run: sudo systemctl start nextcloud-taskprocessing-worker"
+  fail "service: nextcloud-taskprocessing-worker NOT active (state: ${worker_state:-unknown}) — run: sudo systemctl start nextcloud-taskprocessing-worker"
 fi
 
 exit_code=$(systemctl show nextcloud-taskprocessing-worker.service --property=ExecMainStatus 2>/dev/null | cut -d= -f2)

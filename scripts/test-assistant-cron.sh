@@ -16,12 +16,16 @@ set -uo pipefail
 
 CONTAINER="nextcloud-aio-nextcloud"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib-alert.sh
+source "$SCRIPT_DIR/lib-alert.sh"
+OUT_FILE="$(mktemp)"
 TOKEN_NAME="cron-e2e-$(date -u +%Y%m%d-%H%M%S)"
 TOKEN=""
 TOKEN_ID=""
 
 # shellcheck disable=SC2317  # only called indirectly, via the EXIT trap below
 cleanup() {
+  rm -f "$OUT_FILE"
   if [[ -n "$TOKEN_ID" ]]; then
     docker exec --user www-data "$CONTAINER" php occ user:auth-tokens:delete admin "$TOKEN_ID" >/dev/null 2>&1
   fi
@@ -43,8 +47,12 @@ TOKEN_ID=$(docker exec --user www-data "$CONTAINER" php occ user:auth-tokens:lis
   | grep "$TOKEN_NAME" | awk -F'|' '{print $2}' | tr -d ' ')
 
 echo "$(date -u +%FT%TZ) Running test-assistant.sh with e2e (token: $TOKEN_NAME)"
-"$SCRIPT_DIR/test-assistant.sh" --e2e-user admin --e2e-pass "$TOKEN"
-exit_code=$?
+"$SCRIPT_DIR/test-assistant.sh" --e2e-user admin --e2e-pass "$TOKEN" 2>&1 | tee "$OUT_FILE"
+exit_code=${PIPESTATUS[0]}
+if (( exit_code != 0 )); then
+  failed=$(grep -a -E '^[[:space:]]+FAIL' "$OUT_FILE" | sed -E 's/^[[:space:]]+FAIL[[:space:]]+//' | cut -c1-90 | head -4 | paste -sd';' -)
+  nc_alert high "Nextcloud Assistant daily test FAILED (exit $exit_code): ${failed:-see /var/log/nextcloud-assistant-tests.log}"
+fi
 
 echo "$(date -u +%FT%TZ) test-assistant.sh exited $exit_code"
 exit $exit_code

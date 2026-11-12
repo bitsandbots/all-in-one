@@ -71,6 +71,32 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NC_CONTAINER"; then
 fi
 
 OCC=(docker exec --user www-data "$NC_CONTAINER" php occ)
+
+# ── Guard: the Assistant apps must be *enabled*, not merely configured ─────────
+# A Nextcloud major upgrade disables apps that are not yet compatible
+# (2026-11-12: NC 35 disabled assistant + integration_openai; this script kept
+# "FIXED"-ing config rows for an app that was off). Alert, never auto-enable:
+# forcing an incompatible app on can break the instance. Alerts are deduped via
+# a marker in /run (re-sent every 6h while the condition persists).
+# shellcheck source=lib-alert.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-alert.sh"
+ENABLED_APPS=$("${OCC[@]}" app:list 2>/dev/null | sed '/^Disabled:/,$d')
+if [ -n "$ENABLED_APPS" ]; then
+    MISSING=""
+    for app in assistant integration_openai; do
+        echo "$ENABLED_APPS" | grep -qE "^[[:space:]]+- ${app}:" || MISSING="${MISSING:+$MISSING,}$app"
+    done
+    APPS_MARKER=/run/nc-assistant-apps-disabled.alerted
+    if [ -n "$MISSING" ]; then
+        echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') WARNING: Assistant app(s) not enabled: $MISSING — try: occ app:update <app> && occ app:enable <app>"
+        if [ ! -f "$APPS_MARKER" ] || [ -n "$(find "$APPS_MARKER" -mmin +360 2>/dev/null)" ] || [ "$(cat "$APPS_MARKER" 2>/dev/null)" != "$MISSING" ]; then
+            nc_alert high "Nextcloud Assistant apps not enabled: $MISSING (Assistant is down; likely a Nextcloud upgrade — run occ app:update + app:enable)"
+            echo "$MISSING" > "$APPS_MARKER"
+        fi
+    else
+        rm -f "$APPS_MARKER"
+    fi
+fi
 CURRENT_URL=$("${OCC[@]}" config:app:get integration_openai url 2>/dev/null || echo "")
 CURRENT_MODEL=$("${OCC[@]}" config:app:get integration_openai default_completion_model_id 2>/dev/null || echo "")
 CURRENT_KEY=$("${OCC[@]}" config:app:get integration_openai api_key 2>/dev/null || echo "")
