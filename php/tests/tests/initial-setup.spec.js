@@ -105,6 +105,69 @@ test('Initial setup', async ({ page: setupPage, browser }) => {
   await expect(containersPage.locator('#borg-backup-password')).toBeVisible();
   const borgBackupPassword = await containersPage.locator('#borg-backup-password').innerText();
 
+  // Daily backup: a single day of the week can be selected for a weekly backup
+  const dailyBackupTimeFile = '/mnt/docker-aio-config/data/daily_backup_time';
+  const submitDailyBackup = async (weekday) => {
+    await containersPage.locator('input[name="daily_backup_time"]').fill('04:00');
+    await containersPage.locator('#backup_weekday').selectOption(weekday);
+    await containersPage.getByRole('button', { name: 'Submit daily backup time and settings' }).click();
+  };
+
+  // Every successful submission reloads the page, which collapses the backup options again
+  const revealBackupOptions = async () => {
+    const backupOptions = containersPage.locator('details', { hasText: 'Click here to reveal all backup options' });
+    if (!(await backupOptions.evaluate(details => details.open))) {
+      await backupOptions.locator('summary').first().click();
+    }
+  };
+
+  // Accept a weekly backup, which is stored on a 4th line
+  await submitDailyBackup('2');
+  await expect(containersPage.locator('body')).toContainText('Weekly backups will be created on Tuesdays at 04:00 UTC');
+  expect(readFileSync(dailyBackupTimeFile, 'utf8')).toBe('04:00\n\n\n2');
+
+  // Selecting every day keeps the file identical to the one written before the weekday could be selected
+  await revealBackupOptions();
+  await containersPage.getByRole('button', { name: 'Disable or change daily backup settings' }).click();
+  await expect(containersPage.locator('input[name="daily_backup_time"]')).toBeAttached();
+  await revealBackupOptions();
+  await submitDailyBackup('0');
+  await expect(containersPage.locator('body')).toContainText('Daily backups will be created at 04:00 UTC');
+  expect(readFileSync(dailyBackupTimeFile, 'utf8')).toBe('04:00\n\n');
+
+  // Disable the daily backup again so that the following tests are not affected
+  await revealBackupOptions();
+  await containersPage.getByRole('button', { name: 'Disable or change daily backup settings' }).click();
+  await expect(containersPage.locator('input[name="daily_backup_time"]')).toBeAttached();
+
+  // Reject additional backup directories with '.' or '..' segments
+  await revealBackupOptions();
+  for (const additionalBackupDirectory of ['/tmp/test/../aio', '/tmp/test/./aio', '..']) {
+    await containersPage.locator('#additional_backup_directories').fill(additionalBackupDirectory);
+    await containersPage.getByRole('button', { name: 'Submit additional backup locations' }).click();
+    await expect(containersPage.locator('body')).toContainText(`are not allowed as directory names! Problematic is ${additionalBackupDirectory}`);
+  }
+
+  // Accept additional backup directories with dots inside of names and strip trailing slashes
+  await containersPage.locator('#additional_backup_directories').fill('/tmp/test/my.dir..name/\nmy_volume..1');
+  await Promise.all([
+    containersPage.waitForEvent('load'),
+    containersPage.getByRole('button', { name: 'Submit additional backup locations' }).click(),
+  ]);
+  await containersPage.getByText('Click here to reveal all backup options').click();
+  await expect(containersPage.locator('#additional_backup_directories')).toHaveValue('/tmp/test/my.dir..name\nmy_volume..1\n');
+  await expect(containersPage.getByRole('main')).toContainText('This option is currently set.');
+
+  // Clear additional backup directories again so that they do not end up in later backups
+  await containersPage.locator('#additional_backup_directories').fill('');
+  await Promise.all([
+    containersPage.waitForEvent('load'),
+    containersPage.getByRole('button', { name: 'Submit additional backup locations' }).click(),
+  ]);
+  await containersPage.getByText('Click here to reveal all backup options').click();
+  await expect(containersPage.locator('#additional_backup_directories')).toHaveValue('');
+  await expect(containersPage.getByRole('main')).not.toContainText('This option is currently set.');
+
   // Assert that all containers are stopped
   await expect(containersPage.getByRole('button', { name: 'Start containers' })).toBeVisible();
 

@@ -529,7 +529,7 @@ In general recommended VPS are those that are KVM/non-virtualized as Docker shou
 - HDD storage should work as well but is of course much slower than SSD storage
 
 ### Are there known problems when SELinux is enabled?
-Yes. If SELinux is enabled, you might need to add the `--security-opt label:disable` option to the docker run command of the mastercontainer in order to allow it to access the docker socket (or `security_opt: ["label:disable"]` in compose.yaml). See https://github.com/nextcloud/all-in-one/discussions/485
+Yes. If SELinux is enabled, you might need to add the `--security-opt label=disable` option to the docker run command of the mastercontainer in order to allow it to access the docker socket (or `security_opt: ["label=disable"]` in compose.yaml). See https://github.com/nextcloud/all-in-one/discussions/485
 
 ## Customization
 
@@ -1039,7 +1039,7 @@ Backups can be created and restored in the AIO interface using the buttons `Crea
 
 The backups themselves get encrypted with an encryption key that gets shown to you in the AIO interface. Please save that at a safe place as you will not be able to restore from backup without this key.
 
-Daily backups can get enabled after the initial backup is done. Enabling this also allows to enable an option that allows to automatically update all containers, Nextcloud and its apps.
+Daily backups can get enabled after the initial backup is done. Enabling this also allows to enable an option that allows to automatically update all containers, Nextcloud and its apps. Instead of every day, you can select a single day of the week (in UTC) to create a weekly backup. In this case, the automatic updates, including the Nextcloud apps, also happen on that day.
 
 Be aware that this solution does not back up files and folders that are mounted into Nextcloud using the external storage app - but you can add further Docker volumes and host paths that you want to back up after the initial backup is done.
 

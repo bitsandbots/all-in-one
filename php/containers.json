@@ -54,7 +54,8 @@
         "APACHE_MAX_TIME=%NEXTCLOUD_MAX_TIME%",
         "NOTIFY_PUSH_HOST=nextcloud-aio-notify-push",
         "WHITEBOARD_HOST=nextcloud-aio-whiteboard",
-        "HARP_HOST=nextcloud-aio-harp"
+        "HARP_HOST=nextcloud-aio-harp",
+        "THIS_IS_AIO=true"
       ],
       "volumes": [
         {
@@ -867,7 +868,7 @@
       "documentation": "https://github.com/nextcloud/all-in-one/discussions/1709",
       "display_name": "Fulltextsearch",
       "image": "ghcr.io/nextcloud-releases/aio-fulltextsearch",
-      "init": false,
+      "init": true,
       "healthcheck": {
         "start_period": "60s",
         "test": "/healthcheck.sh",
