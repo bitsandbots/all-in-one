@@ -24,7 +24,12 @@ QUIET=false
 [ "${1:-}" = "--quiet" ] && QUIET=true
 
 # Backend selector (set ASSISTANT_BACKEND in the cron file; rollback = "litellm"):
-#   shim    cc-platform OpenAI shim (agent graph + tools), model "cc-platform"
+#   shim    cc-platform OpenAI shim, model "cc-platform". The GLOBAL api_key written
+#           here is the shim's *chat* key (plain model call, no tools): any account
+#           without a personal harness key can only chat. Admin users get the full
+#           agent graph through their PERSONAL integration_openai api_key (one
+#           harness key per user, see ~/.config/cc-shim/keys and cc-platform
+#           docs/API.md "OpenAI-compatible shim").
 #   litellm host LiteLLM proxy straight to Ollama, model "mistral-small3.2"
 BACKEND="${ASSISTANT_BACKEND:-shim}"
 case "$BACKEND" in
@@ -32,8 +37,8 @@ shim)
     EXPECTED_URL="http://172.19.0.1:4200/v1"
     EXPECTED_MODEL="cc-platform"
     EXPECTED_LABEL="cc-platform agent (shim, tier2-chat)"
-    KEY_FILE="/home/coreconduit/.config/cc-shim/shim.env"
-    KEY_VAR="CC_SHIM_KEY"
+    KEY_FILE="/home/coreconduit/.config/cc-shim/keys"
+    KEY_VAR=""   # the chat key is read from the registry below, not sourced
     ;;
 litellm)
     EXPECTED_URL="http://172.19.0.1:4000/v1"
@@ -54,13 +59,20 @@ if [ ! -f "$KEY_FILE" ]; then
     exit 1
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "$KEY_FILE"
-set +a
-LKEY="${!KEY_VAR:-}"
+if [ -n "$KEY_VAR" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$KEY_FILE"
+    set +a
+    LKEY="${!KEY_VAR:-}"
+    KEY_DESC="$KEY_VAR in $KEY_FILE"
+else
+    # Registry format: '<role> <name> <key>'; the global Nextcloud key is the first chat key.
+    LKEY=$(awk '$1=="chat" {print $3; exit}' "$KEY_FILE")
+    KEY_DESC="a 'chat' entry in $KEY_FILE"
+fi
 if [ -z "$LKEY" ]; then
-    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: $KEY_VAR empty in $KEY_FILE, aborting"
+    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') ERROR: no key found ($KEY_DESC), aborting"
     exit 1
 fi
 
@@ -80,6 +92,29 @@ OCC=(docker exec --user www-data "$NC_CONTAINER" php occ)
 # a marker in /run (re-sent every 6h while the condition persists).
 # shellcheck source=lib-alert.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-alert.sh"
+# ── Guard: every admin-group user should have their own harness key ───────────
+# Admin users reach the full agent graph only through a PERSONAL integration_openai
+# api_key (a 'harness' entry in the shim registry). An admin without one silently
+# falls back to the global chat key: safe, but they lose the tools. Alert (deduped,
+# 6h) and point at the provisioning script. Never grants anything by itself.
+ADMIN_USERS=$("${OCC[@]}" group:list --output=json 2>/dev/null |
+    python3 -c 'import sys,json; print(" ".join(json.load(sys.stdin).get("admin", [])))' 2>/dev/null || true)
+NOKEY=""
+for u in $ADMIN_USERS; do
+    v=$("${OCC[@]}" user:setting "$u" integration_openai api_key --default-value= 2>/dev/null || true)
+    [ -n "$v" ] || NOKEY="${NOKEY:+$NOKEY,}$u"
+done
+USERKEY_MARKER=/run/nc-assistant-admin-keys.alerted
+if [ -n "$NOKEY" ]; then
+    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') WARNING: admin user(s) without a personal harness key (chat-only): $NOKEY — run scripts/provision-assistant-user-key.sh <uid>"
+    if [ ! -f "$USERKEY_MARKER" ] || [ -n "$(find "$USERKEY_MARKER" -mmin +360 2>/dev/null)" ] || [ "$(cat "$USERKEY_MARKER" 2>/dev/null)" != "$NOKEY" ]; then
+        nc_alert medium "Nextcloud admin user(s) have no Assistant harness key (chat-only): $NOKEY — run provision-assistant-user-key.sh <uid>"
+        echo "$NOKEY" > "$USERKEY_MARKER"
+    fi
+else
+    rm -f "$USERKEY_MARKER"
+fi
+
 ENABLED_APPS=$("${OCC[@]}" app:list 2>/dev/null | sed '/^Disabled:/,$d')
 if [ -n "$ENABLED_APPS" ]; then
     MISSING=""

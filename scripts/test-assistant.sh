@@ -155,6 +155,66 @@ else
   fi
 fi
 
+# ── 3b. Shim roles: the credential decides the capability ─────────────────────
+# Nextcloud's global api_key must be the shim's *chat* key (no tools) and each admin
+# user's personal key a *harness* key (full agent graph). Without this check a
+# regression that hands the global key a harness role would silently give every
+# Nextcloud account bash/ssh through the Assistant (see cc-platform docs/API.md).
+section "Shim roles (key decides capability)"
+
+SHIM_KEYS_FILE="${SHIM_KEYS_FILE:-/home/coreconduit/.config/cc-shim/keys}"
+if [[ ! -r "$SHIM_KEYS_FILE" ]]; then
+  fail "shim key registry not readable: $SHIM_KEYS_FILE"
+else
+  chat_key=$(awk '$1=="chat" {print $3; exit}' "$SHIM_KEYS_FILE")
+  harness_key=$(awk '$1=="harness" {print $3; exit}' "$SHIM_KEYS_FILE")
+  nc_global_key=$(occ config:app:get integration_openai api_key)
+  shim_url=$(occ config:app:get integration_openai url)
+
+  if [[ -n "$chat_key" && "$nc_global_key" == "$chat_key" ]]; then
+    pass "Nextcloud global api_key is the shim chat key"
+  else
+    fail "Nextcloud global api_key is NOT the shim chat key — every account may reach the harness"
+  fi
+
+  # shim_ask <key> <prompt> -> prints "<http_code> <text>"
+  shim_ask() {
+    local body resp code
+    body=$(python3 -c 'import json,sys; print(json.dumps({"model":"cc-platform","messages":[{"role":"user","content":sys.argv[1]}]}))' "$2")
+    resp=$(curl -sS -m 150 -w '\n%{http_code}' -H "Authorization: Bearer $1" \
+      -H 'Content-Type: application/json' -d "$body" "${shim_url%/}/chat/completions" 2>&1) || true
+    code=${resp##*$'\n'}
+    printf '%s %s\n' "$code" "$(printf '%s' "${resp%$'\n'*}" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["choices"][0]["message"]["content"][:300].replace("\n"," "))
+except Exception: print("")' 2>/dev/null)"
+  }
+
+  tools_q="List the names of the tools you can call, comma separated, nothing else. If you have none, say: I have no tools."
+
+  bad=$(shim_ask "HARNESS_not_a_real_key_000000000" "hi")
+  if [[ "${bad%% *}" == "401" ]]; then pass "shim rejects an unknown key (401)"; else fail "shim did not return 401 for an unknown key: ${bad%% *}"; fi
+
+  if [[ -n "$chat_key" ]]; then
+    ans=$(shim_ask "$chat_key" "$tools_q")
+    if [[ "${ans%% *}" == "200" && "$ans" != *read_file* && "$ans" != *ssh_command* ]]; then
+      pass "chat key gets no tools"
+    else
+      fail "chat key may expose tools: ${ans:0:120}"
+    fi
+  fi
+
+  if [[ -n "$harness_key" ]]; then
+    ans=$(shim_ask "$harness_key" "$tools_q")
+    if [[ "${ans%% *}" == "200" && "$ans" == *read_file* ]]; then
+      pass "harness key reaches the agent tools"
+    else
+      fail "harness key did not reach the tools: ${ans:0:120}"
+    fi
+  else
+    fail "no harness key in $SHIM_KEYS_FILE"
+  fi
+fi
+
 # ── 4. Task Processing Worker ─────────────────────────────────────────────────
 section "Task Processing Worker"
 
