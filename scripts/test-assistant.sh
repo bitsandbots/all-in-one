@@ -221,6 +221,46 @@ except Exception: print("")' 2>/dev/null)"
   fi
 fi
 
+# ── 3c. Nextcloud files tool: cc-agent service account, folders and shares ────
+# The agent saves files into /<uid>/AI Workspace (owned by the non-admin `cc-agent`
+# account, shared with the user). Check the account stays unprivileged, the tools are
+# exposed to the harness, and every admin user's workspace + share still works.
+section "Nextcloud files tool (cc-agent workspace)"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if occ user:info cc-agent >/dev/null; then
+  pass "service account cc-agent exists"
+  if occ user:info cc-agent | grep -qE '^[[:space:]]+- admin[[:space:]]*$'; then
+    fail "cc-agent is in the admin group; it must stay unprivileged"
+  else
+    pass "cc-agent is not an admin"
+  fi
+else
+  fail "service account cc-agent is missing (run setup-nc-agent-account.sh)"
+fi
+
+if [[ -n "${harness_key:-}" ]]; then
+  ans=$(shim_ask "$harness_key" "$tools_q")
+  if [[ "${ans%% *}" == "200" && "$ans" == *nc_files_write* && "$ans" == *nc_files_read* ]]; then
+    pass "harness exposes the Nextcloud file tools"
+  else
+    fail "harness does not list nc_files_* tools: ${ans:0:120}"
+  fi
+fi
+
+admin_users=$(occ group:list --output=json | python3 -c 'import sys,json; print(" ".join(json.load(sys.stdin).get("admin", [])))' 2>/dev/null || true)
+if [[ -z "$admin_users" ]]; then
+  warn "no admin-group users found to check AI Workspaces for"
+fi
+for u in $admin_users; do
+  if python3 -B "$SCRIPT_DIR/nc-agent-workspace.py" "$u" --check >/dev/null 2>&1; then
+    pass "AI Workspace folder + share OK for $u"
+  else
+    fail "AI Workspace missing or cc-agent login failing for $u (run nc-agent-workspace.py $u)"
+  fi
+done
+
 # ── 4. Task Processing Worker ─────────────────────────────────────────────────
 section "Task Processing Worker"
 

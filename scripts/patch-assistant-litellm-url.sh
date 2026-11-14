@@ -115,6 +115,27 @@ else
     rm -f "$USERKEY_MARKER"
 fi
 
+# ── Guard: each admin user's Nextcloud "AI Workspace" must exist and be shared ──
+# The agent's Nextcloud file tools write into /<uid>/AI Workspace (owned by the cc-agent
+# service account, shared with the user). `nc-agent-workspace.py --check` verifies the
+# credential, the folder and the share in one go. Alert only (deduped, 6h): re-creating a
+# share the user removed on purpose every 5 minutes would be pushy; fix with
+# `nc-agent-workspace.py <uid>` (or provision-assistant-user-key.sh).
+NOWS=""
+for u in $ADMIN_USERS; do
+    python3 -B "$(dirname "${BASH_SOURCE[0]}")/nc-agent-workspace.py" "$u" --check >/dev/null 2>&1 || NOWS="${NOWS:+$NOWS,}$u"
+done
+WS_MARKER=/run/nc-assistant-workspaces.alerted
+if [ -n "$NOWS" ]; then
+    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') WARNING: no working AI Workspace for admin user(s): $NOWS — run scripts/nc-agent-workspace.py <uid> (and check the cc-agent credential with setup-nc-agent-account.sh)"
+    if [ ! -f "$WS_MARKER" ] || [ -n "$(find "$WS_MARKER" -mmin +360 2>/dev/null)" ] || [ "$(cat "$WS_MARKER" 2>/dev/null)" != "$NOWS" ]; then
+        nc_alert medium "Nextcloud AI Workspace missing or cc-agent login failing for: $NOWS — the Assistant cannot save files to Nextcloud (run nc-agent-workspace.py <uid>)"
+        echo "$NOWS" > "$WS_MARKER"
+    fi
+else
+    rm -f "$WS_MARKER"
+fi
+
 ENABLED_APPS=$("${OCC[@]}" app:list 2>/dev/null | sed '/^Disabled:/,$d')
 if [ -n "$ENABLED_APPS" ]; then
     MISSING=""
