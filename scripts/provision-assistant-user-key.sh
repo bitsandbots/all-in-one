@@ -12,7 +12,8 @@
 # What it does: 1) appends '<harness> <uid> <random key>' to the shim registry
 # (hot-reloaded by cc-shim, no restart), 2) stores the same key as the user's personal
 # integration_openai api_key via the app's settings service (encrypted), 3) restarts
-# the task-processing worker, which caches settings for up to 5 minutes.
+# the task-processing worker, which caches settings for up to 5 minutes, 4) creates the user's
+# Nextcloud "AI Workspace" shared folder (nc-agent-workspace.py).
 set -euo pipefail
 
 UID_ARG="${1:-}"
@@ -55,4 +56,9 @@ PY
 
 docker exec -i --user www-data --env-file "$ENVF" "$CONTAINER" php < "$HERE/set-user-api-key.php"
 systemctl restart nextcloud-taskprocessing-worker 2>/dev/null || true
+# Also give them their Nextcloud "AI Workspace": a folder the agent's service account owns and
+# shares with them, so files the agent creates show up in their Files (Shared/AI Workspace).
+if ! python3 "$HERE/nc-agent-workspace.py" "$UID_ARG"; then
+  echo "warning: AI Workspace not set up for '$UID_ARG' (run setup-nc-agent-account.sh once, then nc-agent-workspace.py $UID_ARG)" >&2
+fi
 echo "done: '$UID_ARG' now has a harness key (registry hot-reloads; worker restarted)."
