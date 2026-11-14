@@ -23,8 +23,10 @@ case "$BACKEND" in
   shim)
     LITELLM_URL="http://172.19.0.1:4200"
     EXPECTED_MODEL="cc-platform"
-    LITELLM_KEY_FILE="/home/coreconduit/.config/cc-shim/shim.env"
-    KEY_VAR="CC_SHIM_KEY"
+    # Key registry ('<role> <name> <key>'); the inference check uses the chat key,
+    # the same key Nextcloud's global api_key holds. (shim.env no longer has a key.)
+    LITELLM_KEY_FILE="/home/coreconduit/.config/cc-shim/keys"
+    KEY_VAR=""
     HEALTH_PATH="/health"
     ;;
   litellm)
@@ -44,11 +46,15 @@ NC_URL="${NC_URL:-https://workspace.coreconduit.com}"
 
 LITELLM_MASTER_KEY=""
 if [[ -r "$LITELLM_KEY_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$LITELLM_KEY_FILE"
-  set +a
-  LITELLM_MASTER_KEY="${!KEY_VAR:-}"
+  if [[ -z "$KEY_VAR" ]]; then
+    LITELLM_MASTER_KEY=$(awk '$1=="chat" {print $3; exit}' "$LITELLM_KEY_FILE")
+  else
+    set -a
+    # shellcheck disable=SC1090
+    source "$LITELLM_KEY_FILE"
+    set +a
+    LITELLM_MASTER_KEY="${!KEY_VAR:-}"
+  fi
 fi
 
 # Worker: designed to run for --timeout=300 then exit cleanly (ExecMainStatus=0).
