@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:latest
-FROM alpine:3.24.4
+FROM alpine:3.24
 
 RUN set -ex; \
     \
@@ -7,6 +7,7 @@ RUN set -ex; \
     apk add --no-cache \
         util-linux-misc \
         bash \
+        coreutils \
         borgbackup \
         rsync \
         fuse \
